@@ -158,7 +158,8 @@ class Trader: # Performs analysis and sends trades
         
         next_state = (next_price, next_rsi, next_trend, self.wallet.BTC_wallet, self.wallet.USD_wallet)
 
-        reward = (next_state[4] - state[4]) + (next_price * (next_state[3]-state[3])) - fee
+        reward = (next_state[4] - state[4]) + (next_price * (next_state[3]-state[3]))
+        
 #         reward = (self.wallet.USD_wallet - 100 ) + self.wallet.BTC_wallet*state[0]
         
         return next_state, reward
