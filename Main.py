@@ -22,16 +22,16 @@ ACTIONS = {
 }
 
 agent_config = {
-    "delta":0.00005,
-    "epsilon_clip":0.3
+    "delta":0.00001,
+    "epsilon_clip":0.4
     
 }
 
 buffer_config = {
-    "Buffer_size":100000,
+    "Buffer_size":10000,
     "Batch_size": 1000,
     "Buffer_epsilon":0.001,
-    "Buffer_alpha":0.07
+    "Buffer_alpha":0.2
 }
 network_config = {
     
@@ -59,7 +59,7 @@ class Wallet:
 class Analyser:
     def __init__(self):
         
-        self.market_analysis_network = Network(input_dimension=4, output_dimension=1) # some GRU, LSTM network
+        self.market_analysis_network = Network(input_dimension=5, output_dimension=1) # some GRU, LSTM network
         
     def preprocess(data):
         
@@ -73,8 +73,16 @@ class Analyser:
         # add LSTM embedding on latent space to make end to end
         
 #         self.market_analysis_network(data)
+
+        market_price, rsi = data
         
-        return data
+        MA = (pd.DataFrame(market_price).rolling(10).sum()/10)
+        
+        MA = MA.interpolate(method='linear', limit_direction='both')
+        
+        trend = (MA["Close"].iloc[-1] - MA["Close"].iloc[0])/len(MA)
+        
+        return market_price.iloc[-1], rsi.iloc[1], trend
     
     def train_analyser(self, data):
         
@@ -108,8 +116,8 @@ class Trader: # Performs analysis and sends trades
     def get_data(self):
         return data
     
-    def get_market(self, pos):
-        Close_price, rsi = self.market["Close"][pos], self.market["rsi"][pos]
+    def get_market(self, pos, nb = 0):
+        Close_price, rsi = self.market["Close"][pos-nb:pos], self.market["rsi"][pos-nb:pos]
         return Close_price, rsi
     
 
@@ -119,47 +127,49 @@ class Trader: # Performs analysis and sends trades
         
 #         stock_price, RSI, shares, reward = state
 
+        fee = 0.75
         
         if action == ACTIONS["buy"]:
-            if state[3] - fraction * state[0] >0:
+            if state[4] - fraction * state[0] >0:
                 self.wallet.BTC_wallet += fraction
-                self.wallet.USD_wallet -= fraction * state[0]
-                fee = 1
+                self.wallet.USD_wallet -= fraction * state[0] - fee * fraction
             else:
-                fee = 0
+                pass
 
 
         elif action == ACTIONS["sell"]:
-            if state[2] - fraction >=0:
+            if state[3] - fraction >=0:
                 self.wallet.BTC_wallet -= fraction
-                self.wallet.USD_wallet += fraction * state[0]
-                fee = 1
+                self.wallet.USD_wallet += fraction * state[0] - fee * fraction
             else:
-                self.wallet.BTC_wallet -= state[2]
-                self.wallet.USD_wallet += state[2] * state[0]
-                state[2] = 0
-                fee = 1
-                
-                
+                self.wallet.BTC_wallet -= state[3]
+                self.wallet.USD_wallet += state[3] * state[0] - fee * state[3]
+                state[3] = 0
+
         elif action == ACTIONS["hold"]:
-            fee = 0
+            pass
             
         else:
             print(action)
                 
 
         # Wait for next price, rsi
-        next_price, next_rsi = self.get_market(self.market_idx+1)
+        next_price, next_rsi, next_trend = self.analyser.analyse(self.get_market(self.market_idx+1, nb=30))
         
-        next_state = (next_price, next_rsi, self.wallet.BTC_wallet, self.wallet.USD_wallet)
+        next_state = (next_price, next_rsi, next_trend, self.wallet.BTC_wallet, self.wallet.USD_wallet)
 
-        reward = (next_state[3] - state[3]) + (next_price * (next_state[2]-state[2])) - fee
+        reward = (next_state[4] - state[4]) + (next_price * (next_state[3]-state[3])) - fee
+#         reward = (self.wallet.USD_wallet - 100 ) + self.wallet.BTC_wallet*state[0]
         
         return next_state, reward
         
     def decision_making(self):
         
-        data = self.get_market(self.market_idx)
+        data = self.get_market(self.market_idx, nb=30)
+        
+        if len(data[0]) < 30:
+            self.market_idx +=1
+            return None
         
 #         data = self.analyser.preprocess(data)
         
@@ -167,7 +177,7 @@ class Trader: # Performs analysis and sends trades
         
         self.wallet.set_rate(market[0])
         
-        self.state = [market[0], market[1], self.wallet.BTC_wallet, self.wallet.USD_wallet]
+        self.state = [market[0], market[1], market[2], self.wallet.BTC_wallet, self.wallet.USD_wallet]
         
         action = self.agent.get_next_action(self.state)
         
@@ -195,8 +205,10 @@ if __name__ == "__main__":
         try:
 
             reward = trader.decision_making()
+            if reward == None:
+                continue
 
-            wallet_.append(trader.state[3])
+            wallet_.append(trader.state[4])
 
             trader.wallet.set_rate(trader.state[0])
 
@@ -213,6 +225,7 @@ if __name__ == "__main__":
             writer.add_scalar('USD wallet',
                                 trader.wallet.USD_wallet,
                                 trader.market_idx)
+            
             writer.add_scalar('BTC wallet',
                                 trader.wallet.BTC_wallet,
                                 trader.market_idx)
@@ -226,6 +239,9 @@ if __name__ == "__main__":
                                 trader.market_idx)
             writer.add_scalar('BTCUSDT',
                                 trader.market["Close"][trader.market_idx],
+                                trader.market_idx)
+            writer.add_scalar('reward',
+                                reward,
                                 trader.market_idx)
 
             if trader.market_idx%1000 == 0:

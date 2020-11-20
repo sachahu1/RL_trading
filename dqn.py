@@ -5,9 +5,9 @@ import numpy as np
 class DQN:
     def __init__(self):
         
-        self.q_network = Network(input_dimension=4, output_dimension=3)
+        self.q_network = Network(input_dimension=5, output_dimension=3)
         
-        self.target_network = Network(input_dimension=4, output_dimension=3)
+        self.target_network = Network(input_dimension=5, output_dimension=3)
         
         self.optimiser = torch.optim.Adam(self.q_network.parameters(), lr=0.001)
         
